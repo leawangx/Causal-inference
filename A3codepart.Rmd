@@ -1,0 +1,173 @@
+---
+title: "A3"
+author: "Xinrui Wang"
+date: "2020/12/6"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(dagitty)
+library(lavaan)
+
+#Q3
+fig = dagitty("dag{ a -> b <- c -> d}")
+impliedConditionalIndependencies(fig)
+```
+
+```{r}
+#Q5
+fig = dagitty("dag{ x -> r -> s -> t <- u <- v -> y}")
+coordinates(fig) = list(x=c(x=1,r=2,s=3,t=4,u=5,v=6,y=7), y=c(x=0,r=0,s=0,t=0,u=0,v=0,y=0))
+plot(fig)
+```
+
+```{r}
+#5a
+pairs <- combn( c("x","s","t","u","y"), 2 )
+
+apply( pairs, 2, function(x){
+    p <- paths( fig, x[1], x[2], c("r","v") )
+    if( !p$open ){
+        cat( x[1]," and ",x[2]," are independent given {r,v}.\n")}})
+        
+#5b
+impliedConditionalIndependencies(fig)
+
+#5c
+sapply(names(fig), function(Z) dseparated(fig,"x","y",Z) )
+
+#5d
+predictors <- c("x","r","s","t")
+intersect(predictors, dseparated(fig, "y", list(), predictors))
+```
+
+```{r}
+#Q6
+fig<- dagitty("dag{X <- Z1 -> Z3 <- Z2 -> Y
+X <- Z3 -> Y
+X -> W -> Y}")
+
+coordinates(fig) <- list(x=c(X=1,W=2,Y=3,Z1=1,Z3=2,Z2=3),
+    y=c(X=0,W=0,Y=0,Z2=-2,Z1=-2,Z3=-1))
+plot(fig)
+
+#6a
+pairs <- combn(names(fig), 2)
+apply( pairs, 2, function(x){
+    all.other.variables <- setdiff( names(fig), x )
+    if( dseparated( fig, x[1], x[2], all.other.variables ) ){
+        cat( x[1]," and ",x[2]," are independent given ", 
+            paste( all.other.variables, collapse=",") ,'.\n')
+    }
+} )
+
+#6b
+#markovBlanket(x,v) returns x's parents, its children, and all other parents of its children. The Markov blanket always renders x independent of all other nodes in the graph.
+# for W:
+markovBlanket(fig,"W")
+# for X:
+markovBlanket(fig,"X")
+# for Y:
+#markovBlanket(fig,"Y") gives error
+union(union(parents(fig,"Y"),children(fig,"Y")),spouses(fig, "Y"))
+# for Z1:
+markovBlanket(fig,"Z1")
+# for Z2:
+markovBlanket(fig,"Z2")
+# for Z3:
+markovBlanket(fig,"Z3")
+
+#6c
+predictors <- setdiff( names( fig), "Y" )
+intersect( predictors, dconnected( fig, "Y", list(), predictors ))
+
+#6d
+p <- paths( fig, "Z2", "W", "Z3" )
+p$paths[p$open]
+# quality of prediction improve if add measurement of W -> yes
+
+#6e
+adjustmentSets(fig,'X','Y')
+
+#6f
+load('C:/Users/69544/Desktop/STAC50/A3/Assignment3.RData')
+# { Z2, Z3 }
+
+### Outcome regression
+## Step 1: Fit a linear regression model for the outcome
+model = Y ~ X+Z2+Z3
+fit = lm(model,data = data)
+summary(fit)
+
+## Step 2: plug in the regression model to obtain estimates
+n=nrow(data)
+# B1(L) = E[Y|A=1,L]: Only L_i change, A_i remains constant (1)
+newdata1 = newdata0 = data; 
+newdata1$X = rep(1,n)
+B1.hat   = predict(fit, newdata1)
+# B0(L) = E[Y|A=0,L]: Only L_i change, A_i remains constant (0)
+newdata0$X = rep(0,n)
+B0.hat   = predict(fit, newdata0)
+# Compare with B(A,L) = E[Y|A,L]: both A_i and L_i change
+B.hat = predict(fit)
+
+head(data$X,20)
+head(B.hat,20)
+head(B0.hat,20)
+
+(ACE.or.hat = mean(B1.hat) - mean(B0.hat))
+
+### inverse probability weighting
+## Step 1: Estimation of ip weights via a logistic model
+fit = glm(X~Z2+Z3,
+    family = binomial(),   
+    data = data
+)
+summary(fit)
+k=data
+pscore = predict(fit, type = "response")
+p.x.obs = ifelse(k$X == 0, 1 - pscore, pscore) 
+head(k)
+
+## Step 2: Estimate the mean potential outcomes and ACE
+EY1.hat = mean((k$X==1) * k$Y/ p.x.obs)
+EY0.hat = mean((k$X==0) * k$Y / p.x.obs)
+(ACE.ipw.hat = EY1.hat - EY0.hat)
+
+### Doubly robust estimation
+EY1.hat = mean(B1.hat - (data$X==1) * (B1.hat - data$Y) / p.x.obs)
+EY0.hat = mean(B0.hat - (data$X==0) * (B0.hat - data$Y) / p.x.obs)
+(ACE.dr.hat = EY1.hat - EY0.hat)
+```
+
+```{r}
+#6g estimate the average causal effect of X on Y
+
+#> ACE.or.hat
+#[1] -0.993959
+#> ACE.ipw.hat
+#[1] -0.2307389
+#> ACE.dr.hat
+#[1] -0.973663
+
+### using outcome regression and inverse probability weighting give us different estimates of the ACE of X on Y. if linear model is the correct assumpution, then the estimate of outcome regression should be correct.if logistic model for X and variables is correct, then the estimate of inverse probability weighting should be correct. however, we cannot come to conclude which is better. 
+### because ACE.or.hat is more close to ACE.dr.hat AND in lecture we said that doule robust estimation should be closer to the true value, the model for the outcome regression should be correct.
+```
